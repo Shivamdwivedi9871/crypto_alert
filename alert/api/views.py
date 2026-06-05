@@ -9,6 +9,7 @@ from alert.utils import generate_custom_jwt
 from alert.api.permissions import IsAuthenticatedCustom
 from alert.api.serializer import AlertSerializer
 from alert.models import Alert
+from alert.api.pagination import AlertCursorPagination
 
 
 class CustomLoginView(APIView):
@@ -68,9 +69,19 @@ class CustomTokenRefreshView(APIView):
 class AlertCreateListView(APIView):
 
     permission_classes = [IsAuthenticatedCustom]
+    pagination_class = AlertCursorPagination
 
     def get(self, request):
         alert = Alert.objects.filter(user=request.user)
+
+        paginator = self.pagination_class()
+
+        page = paginator.paginate_queryset(alert, request, view=self)
+
+        if page is not None:
+            serializer = AlertSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
         serializer = AlertSerializer(alert, many=True)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -83,3 +94,40 @@ class AlertCreateListView(APIView):
 
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CryptoPriceUpdateTrigger(APIView):
+
+    def post(self, request):
+        crypto_symbol = request.data.get('crypto_symbol', '').upper()
+        current_price = float(request.data.get('current_price', 0))
+
+        if not crypto_symbol or not current_price:
+            return Response({'error': 'Missing Crypto_Symbol or Crypto_Price'}, status=status.HTTP_400_BAD_REQUEST)
+
+        alerts_above = Alert.objects.filter(
+            crypto_symbol=crypto_symbol,
+            condition='ABOVE',
+            target_price__lte=current_price,
+            is_active=True
+        )
+
+        alerts_below = Alert.objects.filter(
+            crypto_symbol=crypto_symbol,
+            condition='BELOW',
+            target_price__gte=current_price,
+            is_active=True
+        )
+
+        triggered_count = 0
+
+        for alert in (alerts_above | alerts_below):
+            is_active = False
+            alert.save()
+            triggered_count += 1
+            print(
+                f"Alert Triggered: User {alert.user.username}'s alert for {crypto_symbol} hit {current_price}")
+
+        return Response({
+            f"Pricess Processing finished. {triggered_count} alert triggered"
+        }, status=status.HTTP_200_OK)
