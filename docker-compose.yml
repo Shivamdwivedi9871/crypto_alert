@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  redis_broker:
+    image: redis:7-alpine
+    container_name: crypto-redis
+    ports:
+      - "6379:6379"
+  
+  web:
+    build: .
+    container_name: crypto_web
+    environment:
+      - RUNNING_IN_DOCKER=True
+    # command: python manage.py runserver 0.0.0.0:8000
+    command: daphne -b 0.0.0.0 -p 8000 crypto_system_alert.asgi:application
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis_broker
+  
+  celery_worker:
+    build: .
+    container_name: celery_worker
+    environment:
+      - RUNNING_IN_DOCKER=True
+    command: celery -A crypto_system_alert worker --loglevel=info
+    volumes:
+      - .:/app
+    depends_on:
+      - redis_broker
+  
+  celery_beat:
+    build: .
+    container_name: celery_beat
+    environment:
+      - RUNNING_IN_DOCKER=True
+    command: celery -A crypto_system_alert beat --loglevel=info
+    volumes:
+      - .:/app
+    depends_on:
+      - redis_broker

@@ -1,0 +1,12 @@
+django
+djangorestframework
+celery
+redis
+django-celery-beat
+requests
+psycopg2-binary
+PyJWT
+cryptography
+channels>=4.0.0
+channels-redis>=4.1.0
+daphne>=4.0.0

@@ -2,6 +2,7 @@ import jwt
 from django.contrib.auth import authenticate
 from django.conf import settings
 from rest_framework.views import APIView
+from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework import status
 from datetime import datetime, timedelta, timezone
@@ -141,3 +142,11 @@ class CryptoPriceUpdateTrigger(APIView):
             'live_price_checked': current_price,
             'alert_triggered': triggered_count
         }, status=status.HTTP_200_OK)
+
+
+class DeleteAlertView(generics.DestroyAPIView):
+    serializer_class = AlertSerializer
+    permission_classes = [IsAuthenticatedCustom]
+
+    def get_queryset(self):
+        return Alert.objects.filter(user=self.request.user)

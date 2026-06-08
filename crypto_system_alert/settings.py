@@ -9,8 +9,9 @@ https://docs.djangoproject.com/en/6.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
-
+from celery.schedules import crontab
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -31,6 +32,7 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -38,7 +40,9 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "channels",
     "alert",
+    "django_celery_beat",
 ]
 
 MIDDLEWARE = [
@@ -49,6 +53,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "alert.middleware.APICustomMiddlewareLog",
 ]
 
 ROOT_URLCONF = "crypto_system_alert.urls"
@@ -70,9 +75,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "crypto_system_alert.wsgi.application"
 
+ASGI_APPLICATION = 'crypto_system_alert.asgi.application'
+
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
+
+RUNNING_IN_DOCKER = os.environ.get('RUNNING_IN_DOCKER', 'False') == 'True'
+REDIS_HOST = 'redis_broker' if RUNNING_IN_DOCKER else '127.0.0.1'
 
 DATABASES = {
     "default": {
@@ -80,8 +90,18 @@ DATABASES = {
         "NAME": "crypto_alert_db",
         "USER": 'postgres',
         "PASSWORD": "admin",
-        "HOST": '127.0.0.1',
+        "HOST": 'host.docker.internal' if RUNNING_IN_DOCKER else '127.0.0.1',
         "PORT": '5432',
+    }
+}
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': f'redis://{REDIS_HOST}:6379/1',
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        }
     }
 }
 
@@ -125,4 +145,40 @@ STATIC_URL = "static/"
 REST_FRAMEWORK = {
     # 'DEFAULT_PAGINATION_CLASS': 'alert.api.pagination.CustomPagination',
     # 'PAGE_SIZE': 2,
+}
+
+
+CELERY_BROKER_URL = 'redis://redis_broker:6379/0'
+CELERY_RESULT_BACKEND = 'redis://redis_broker:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'Asia/Kolkata'
+
+
+CELERY_BEAT_SCHEDULE = {
+    'check_alert_every_minute': {
+        'task': 'alert.tasks.check_crypto_alert_task',
+        'schedule': crontab(minute='*/1')
+    },
+}
+
+# Email
+
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = 'dwivedishiv850@gmail.com'
+EMAIL_HOST_PASSWORD = 'Password'
+DEFAULT_FROM_USER = EMAIL_HOST_USER
+
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [(REDIS_HOST, 6379)],
+        },
+    },
 }
