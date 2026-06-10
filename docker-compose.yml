@@ -6,7 +6,115 @@ services:
     container_name: crypto-redis
     ports:
       - "6379:6379"
+    networks:
+      - crypto_network
   
+  # Master Database (Write Operations)
+  postgres_master:
+    image: postgres:15-alpine
+    container_name: postgres_master
+    environment:
+      - POSTGRES_DB=crypto_alert_db
+      - POSTGRES_USER=shivam_admin
+      - POSTGRES_PASSWORD=master_password
+      - POSTGRES_INITDB_ARGS=--auth-host=trust --auth-local=trust
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    command: >
+      postgres
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c listen_addresses=*
+    volumes:
+      - postgres_master_data:/var/lib/postgresql/data
+      - ./postgres/master-init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - crypto_network
+  
+  # Slave Database (Read Operations)
+
+  # postgres_slave:
+  #   image: postgres:15-alpine
+  #   container_name: postgres_slave
+  #   user: postgres
+  #   environment:
+  #     - POSTGRES_DB=crypto_alert_db
+  #     - POSTGRES_USER=shivam_admin
+  #     - POSTGRES_PASSWORD=master_password
+  #     # - PGCOMMAND=postgres -c hot_standby=on
+  #   # command: postgres -c hot_standby=on
+  #   entrypoint: >
+  #     sh -c "
+  #     set -e;
+  #     echo 'Waiting for master database to accept connections...';
+  #     until pg_isready -h postgres_master -p 5432 -U shivam_admin; do
+  #       sleep 1;
+  #     done;
+
+  #     if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+  #       echo 'Cleaning old data directory...';
+  #       rm -rf /var/lib/postgresql/data/*;
+
+  #       echo 'Starting basebackup from master...';
+  #       pg_basebackup \
+  #         -h postgres_master \
+  #         -p 5432 \
+  #         -D /var/lib/postgresql/data \
+  #         -U shivam_admin \
+  #         -Fp -Xs -P -R;
+  #     fi;
+
+  #     echo 'Starting slave postgres server...';
+  #     exec postgres -c hot_standby=on
+  #     "
+  #   volumes:
+  #     - postgres_slave_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5433:5432"
+  #   depends_on:
+  #     - postgres_master
+  #   networks:
+  #     - crypto_network
+  postgres_slave:
+    image: postgres:15-alpine
+    container_name: postgres_slave
+    user: postgres
+    environment:
+      PGPASSWORD: master_password
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "Waiting for master database to accept connections..."
+        until pg_isready -h postgres_master -p 5432 -U shivam_admin; do
+          sleep 1
+        done
+
+        if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+          echo "Cleaning old data directory..."
+          rm -rf /var/lib/postgresql/data/*
+
+          echo "Starting basebackup from master..."
+          pg_basebackup -h postgres_master -p 5432 -U shivam_admin -D /var/lib/postgresql/data -U shivam_admin -Fp -Xs -P -R
+        fi
+
+        echo "Fixing data directory permissions..."
+        chmod 700 /var/lib/postgresql/data
+
+        echo "Starting slave postgres server..."
+        exec postgres -c hot_standby=on
+    volumes:
+      - postgres_slave_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    depends_on:
+      - postgres_master
+    networks:
+      - crypto_network
+    
   web:
     build: .
     container_name: crypto_web
@@ -20,6 +128,10 @@ services:
       - "8000:8000"
     depends_on:
       - redis_broker
+      - postgres_master
+      - postgres_slave
+    networks:
+      - crypto_network
   
   celery_worker:
     build: .
@@ -31,6 +143,10 @@ services:
       - .:/app
     depends_on:
       - redis_broker
+      - postgres_master
+      - postgres_slave
+    networks:
+      - crypto_network
   
   celery_beat:
     build: .
@@ -42,3 +158,14 @@ services:
       - .:/app
     depends_on:
       - redis_broker
+      - postgres_master
+      - postgres_slave
+    networks:
+      - crypto_network
+  
+volumes:
+  postgres_master_data:
+  postgres_slave_data:
+networks:
+  crypto_network:
+    name: crypto_prod_net

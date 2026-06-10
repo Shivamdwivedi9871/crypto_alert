@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework import status
+from django.db import transaction
 from datetime import datetime, timedelta, timezone
 from alert.utils import generate_custom_jwt
 from alert.api.permissions import IsAuthenticatedCustom
@@ -12,6 +13,7 @@ from alert.api.serializer import AlertSerializer
 from alert.models import Alert
 from alert.api.pagination import AlertCursorPagination
 from alert.services import CryptoPriceService
+from alert.tasks import check_crypto_alert_task
 
 
 class CustomLoginView(APIView):
@@ -88,11 +90,14 @@ class AlertCreateListView(APIView):
 
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @transaction.atomic()
     def post(self, request):
         serializer = AlertSerializer(data=request.data)
 
         if serializer.is_valid():
             serializer.save(user=request.user)
+
+            transaction.on_commit(lambda: check_crypto_alert_task.delay())
 
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -114,28 +119,22 @@ class CryptoPriceUpdateTrigger(APIView):
             }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         print(f'{crypto_symbol} latest live price on internet ${current_price}')
 
-        alerts_above = Alert.objects.filter(
-            crypto_symbol=crypto_symbol,
-            condition='ABOVE',
-            target_price__lte=current_price,
-            is_active=True
-        )
+        with transaction.atomic():
 
-        alerts_below = Alert.objects.filter(
-            crypto_symbol=crypto_symbol,
-            condition='BELOW',
-            target_price__gte=current_price,
-            is_active=True
-        )
+            triggered_alert = Alert.objects.select_for_update().filter(
+                Q(crypto_symbol=crypto_symbol, condition='ABOVE', target_price__lte=current_price) |
+                Q(crypto_symbol=crypto_symbol, condition='BELOW',
+                  target_price__gte=current_price)
+            )
 
-        triggered_count = 0
+            triggered_count = 0
 
-        for alert in (alerts_above | alerts_below):
-            alert.is_active = False
-            alert.save()
-            triggered_count += 1
-            print(
-                f"Alert Triggered: User {alert.user.username}'s alert for {crypto_symbol} hit {current_price}")
+            for alert in triggered_alert:
+                alert.is_active = False
+                alert.save()
+                triggered_count += 1
+                print(
+                    f"Alert Triggered: User {alert.user.username}'s alert for {crypto_symbol} hit {current_price}")
 
         return Response({
             'message': f'Live price Processed',

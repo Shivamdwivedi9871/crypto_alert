@@ -83,25 +83,41 @@ ASGI_APPLICATION = 'crypto_system_alert.asgi.application'
 
 RUNNING_IN_DOCKER = os.environ.get('RUNNING_IN_DOCKER', 'False') == 'True'
 REDIS_HOST = 'redis_broker' if RUNNING_IN_DOCKER else '127.0.0.1'
+DB_MASTER_HOST = 'postgres_master' if RUNNING_IN_DOCKER else '127.0.0.1'
+DB_SLAVE_HOST = 'postgres_slave' if RUNNING_IN_DOCKER else '127.0.0.1'
 
 DATABASES = {
+    # Main Write DB (Master)
     "default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": "crypto_alert_db",
-        "USER": 'postgres',
-        "PASSWORD": "admin",
-        "HOST": 'host.docker.internal' if RUNNING_IN_DOCKER else '127.0.0.1',
+        "USER": 'shivam_admin',
+        "PASSWORD": "master_password",
+        "HOST": DB_MASTER_HOST,
+        "PORT": '5432',
+    },
+
+    # Reda only (slave)
+
+    'replica': {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "crypto_alert_db",
+        "USER": 'shivam_admin',
+        "PASSWORD": "master_password",
+        "HOST": DB_SLAVE_HOST,
         "PORT": '5432',
     }
 }
+
+DATABASE_ROUTERS = ['alert.routers.PrimaryReplicaRouter']
 
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
         'LOCATION': f'redis://{REDIS_HOST}:6379/1',
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-        }
+        # 'OPTIONS': {
+        #     'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        # }
     }
 }
 
@@ -148,8 +164,8 @@ REST_FRAMEWORK = {
 }
 
 
-CELERY_BROKER_URL = 'redis://redis_broker:6379/0'
-CELERY_RESULT_BACKEND = 'redis://redis_broker:6379/0'
+CELERY_BROKER_URL = f'redis://{REDIS_HOST}:6379/0'
+CELERY_RESULT_BACKEND = f'redis://{REDIS_HOST}:6379/0'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -180,5 +196,28 @@ CHANNEL_LAYERS = {
         'CONFIG': {
             'hosts': [(REDIS_HOST, 6379)],
         },
+    },
+}
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{'
+        },
+    },
+
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
     },
 }
